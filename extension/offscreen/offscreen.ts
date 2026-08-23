@@ -92,15 +92,23 @@ class OffscreenNeuralEngine {
 
     this.modelInfo.status = 'loading';
     this.modelInfo.error = undefined;
+    this.modelInfo.progress = 0;
 
     this.loadPromise = (async () => {
       try {
         console.log(`[Offscreen] Loading ${MODEL_ID} on ${this.modelInfo.device} (${this.modelInfo.dtype})...`);
 
+        const progressCb = (progress: any) => {
+          if (progress?.status === 'progress' && typeof progress.progress === 'number') {
+            this.modelInfo.progress = Math.round(progress.progress);
+          }
+        };
+
         try {
           this.tts = await KokoroTTS.from_pretrained(MODEL_ID, {
             dtype: this.modelInfo.dtype,
             device: this.modelInfo.device,
+            progress_callback: progressCb,
           });
         } catch (webGpuError) {
           // If WebGPU initialization fails at runtime, fallback to WASM (q8)
@@ -111,6 +119,7 @@ class OffscreenNeuralEngine {
             this.tts = await KokoroTTS.from_pretrained(MODEL_ID, {
               dtype: 'q8',
               device: 'wasm',
+              progress_callback: progressCb,
             });
           } else {
             throw webGpuError;
@@ -118,11 +127,14 @@ class OffscreenNeuralEngine {
         }
 
         this.modelInfo.status = 'ready';
+        this.modelInfo.progress = 100;
         console.log('[Offscreen] Kokoro-82M model loaded and ready.');
         return this.modelInfo;
       } catch (err: any) {
         this.modelInfo.status = 'error';
-        this.modelInfo.error = err?.message || String(err);
+        const msg = err?.message || String(err);
+        const cause = err?.cause?.message ? ` (${err.cause.message})` : '';
+        this.modelInfo.error = `${msg}${cause}`;
         console.error('[Offscreen] Failed to load Kokoro model:', err);
         throw err;
       } finally {

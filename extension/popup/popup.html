@@ -49,6 +49,7 @@
           </div>
           <span id="model-device-badge" class="device-badge">WASM</span>
         </div>
+        <div id="model-error-msg" class="model-error-box" style="display: none;"></div>
         <button id="btn-load-model" class="btn btn-sm btn-accent">
           Load Model
         </button>
@@ -83,7 +84,7 @@
     </main>
 
     <footer class="footer">
-      <div class="server-status">
+      <div id="server-status-container" class="server-status" style="display: none;">
         <span id="server-dot" class="status-dot"></span>
         <span id="server-status-text">Server checking...</span>
       </div>

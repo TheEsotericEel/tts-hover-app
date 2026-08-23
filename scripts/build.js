@@ -73,12 +73,14 @@ async function build() {
   copyFileSync(resolve(root, 'extension/content/overlay.css'), resolve(outDir, 'content/overlay.css'));
   copyFileSync(resolve(root, 'extension/offscreen/offscreen.html'), resolve(outDir, 'offscreen/offscreen.html'));
 
-  // Copy WASM binaries from onnxruntime-web
+  // Copy WASM and MJS loader binaries from onnxruntime-web
   const onnxWasmDir = resolve(root, 'node_modules/onnxruntime-web/dist');
   if (existsSync(onnxWasmDir)) {
-    const wasmFiles = readdirSync(onnxWasmDir).filter((f) => f.endsWith('.wasm'));
-    for (const wasmFile of wasmFiles) {
-      copyFileSync(resolve(onnxWasmDir, wasmFile), resolve(outDir, 'wasm', wasmFile));
+    const runtimeFiles = readdirSync(onnxWasmDir).filter(
+      (f) => f.endsWith('.wasm') || f.endsWith('.mjs')
+    );
+    for (const runtimeFile of runtimeFiles) {
+      copyFileSync(resolve(onnxWasmDir, runtimeFile), resolve(outDir, 'wasm', runtimeFile));
     }
   }
 

@@ -11,6 +11,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sliderSpeed = document.getElementById('slider-speed') as HTMLInputElement;
   const speedValue = document.getElementById('speed-value') as HTMLSpanElement;
   const btnTestVoice = document.getElementById('btn-test-voice') as HTMLButtonElement;
+
+  const serverStatusContainer = document.getElementById('server-status-container') as HTMLDivElement;
   const serverDot = document.getElementById('server-dot') as HTMLSpanElement;
   const serverStatusText = document.getElementById('server-status-text') as HTMLSpanElement;
 
@@ -19,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const modelDot = document.getElementById('model-dot') as HTMLSpanElement;
   const modelStatusText = document.getElementById('model-status-text') as HTMLSpanElement;
   const modelDeviceBadge = document.getElementById('model-device-badge') as HTMLSpanElement;
+  const modelErrorMsg = document.getElementById('model-error-msg') as HTMLDivElement;
   const btnLoadModel = document.getElementById('btn-load-model') as HTMLButtonElement;
 
   // Initialize UI state
@@ -27,12 +30,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   sliderSpeed.value = String(settings.speed || 1.0);
   speedValue.textContent = `${Number(sliderSpeed.value).toFixed(2)}x`;
 
-  function updateModelCardVisibility(providerId: string) {
+  function updateProviderViews(providerId: string) {
+    // 1. Model card visibility
     if (providerId === 'kokoro-browser') {
       kokoroModelCard.style.display = 'flex';
       checkKokoroModelStatus();
     } else {
       kokoroModelCard.style.display = 'none';
+    }
+
+    // 2. Server status footer visibility (only relevant for local server backends)
+    if (providerId === 'kokoro' || providerId === 'melo') {
+      serverStatusContainer.style.display = 'flex';
+      checkServerStatus();
+    } else {
+      serverStatusContainer.style.display = 'none';
     }
   }
 
@@ -47,27 +59,38 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (info.status === 'ready') {
         modelDot.className = 'model-dot ready';
         modelStatusText.textContent = 'Kokoro AI: Ready';
+        modelErrorMsg.style.display = 'none';
         btnLoadModel.textContent = 'Model Ready';
         btnLoadModel.disabled = true;
       } else if (info.status === 'loading') {
         modelDot.className = 'model-dot loading';
         modelStatusText.textContent = 'Kokoro AI: Loading...';
+        modelErrorMsg.style.display = 'none';
         btnLoadModel.textContent = 'Loading...';
         btnLoadModel.disabled = true;
       } else if (info.status === 'error') {
         modelDot.className = 'model-dot error';
         modelStatusText.textContent = 'Kokoro AI: Failed';
+        if (info.error) {
+          modelErrorMsg.textContent = info.error;
+          modelErrorMsg.style.display = 'block';
+        }
         btnLoadModel.textContent = 'Retry Loading';
         btnLoadModel.disabled = false;
       } else {
         modelDot.className = 'model-dot not-loaded';
         modelStatusText.textContent = 'Kokoro AI: Not loaded';
+        modelErrorMsg.style.display = 'none';
         btnLoadModel.textContent = 'Load Model';
         btnLoadModel.disabled = false;
       }
-    } catch {
-      modelDot.className = 'model-dot not-loaded';
-      modelStatusText.textContent = 'Kokoro AI: Not loaded';
+    } catch (err: any) {
+      modelDot.className = 'model-dot error';
+      modelStatusText.textContent = 'Kokoro AI: Error';
+      modelErrorMsg.textContent = err?.message || String(err);
+      modelErrorMsg.style.display = 'block';
+      btnLoadModel.textContent = 'Retry Loading';
+      btnLoadModel.disabled = false;
     }
   }
 
@@ -111,10 +134,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Load initial voices and status
-  updateModelCardVisibility(selectProvider.value);
+  // Load initial view states and voices
+  updateProviderViews(selectProvider.value);
   await populateVoices(selectProvider.value, settings.voice);
-  await checkServerStatus();
 
   // 1. Toggle Reader Mode
   toggleEnabled.addEventListener('change', async () => {
@@ -124,7 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. Change Provider
   selectProvider.addEventListener('change', async () => {
     const newProvider = selectProvider.value;
-    updateModelCardVisibility(newProvider);
+    updateProviderViews(newProvider);
     await populateVoices(newProvider);
     await ttsClient.updateSettings({
       provider: newProvider,
@@ -139,21 +161,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     modelDot.className = 'model-dot loading';
     modelStatusText.textContent = 'Kokoro AI: Loading...';
+    modelErrorMsg.style.display = 'none';
     btnLoadModel.textContent = 'Loading...';
     btnLoadModel.disabled = true;
 
     try {
       await browserKokoro.loadModel();
-      modelDot.className = 'model-dot ready';
-      modelStatusText.textContent = 'Kokoro AI: Ready';
-      btnLoadModel.textContent = 'Model Ready';
-      btnLoadModel.disabled = true;
+      await checkKokoroModelStatus();
     } catch (err: any) {
       console.error('Failed to load in-browser Kokoro model:', err);
       modelDot.className = 'model-dot error';
       modelStatusText.textContent = 'Kokoro AI: Load Failed';
+      modelErrorMsg.textContent = err?.message || String(err);
+      modelErrorMsg.style.display = 'block';
       btnLoadModel.textContent = 'Retry Loading';
       btnLoadModel.disabled = false;
+      await checkKokoroModelStatus();
     }
   });
 
