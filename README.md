@@ -1,6 +1,6 @@
 # Point & Read TTS Chrome Extension
 
-A modular, robust point-to-read text-to-speech Chrome Extension with swappable TTS provider backends.
+A modular, robust point-to-read text-to-speech Chrome Extension with in-browser neural AI voices and swappable provider backends.
 
 ```text
 DOM text
@@ -11,113 +11,59 @@ TTSClient.prepare(text) / play(prepared)
    ↓
 ┌───────────────────── TTS Providers ─────────────────────┐
 │                                                         │
+│  ├── BrowserKokoroTTSProvider (In-Browser Neural AI)    │
+│  │     └── Offscreen Document (Kokoro-82M ONNX WebGPU)  │
+│  │                                                      │
 │  ├── SystemTTSProvider (window.speechSynthesis)         │
+│  │                                                      │
 │  └── RemoteServerTTSProvider (http://127.0.0.1:PORT)   │
-│           │                                             │
-│           ▼                                             │
-│     FastAPI / HTTP TTS Server                           │
-│           ├── MockNeuralProvider                        │
-│           ├── KokoroProvider (Kokoro-82M)               │
-│           └── MeloProvider (MeloTTS, EN-AU)             │
+│           └── Local Python Server (Melo AU / Kokoro)    │
 │                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
+## Features
+
+- **In-Browser Neural AI (Kokoro-82M)**: High-quality neural text-to-speech running completely in Chrome using WebGPU / WASM in an Offscreen Document. Zero server setup required.
+- **Smart DOM Block Segmentation**: Seamlessly highlights coherent paragraphs, headers, list items, and quiz buttons/choices as you hover.
+- **Click-to-Speak**: Click any highlighted block to listen.
+- **Decoupled Cancellation & LRU Audio Caching**: Hovering pre-buffers synthesis; moving blocks cancels preparation without interrupting active playback.
+- **Zero-Setup System Fallback**: Browser `SpeechSynthesis` voices always available instantly.
+- **Optional Localhost Python Server**: Companion FastAPI server for advanced or heavy backends (like MeloTTS Australian English `EN-AU`).
+
+---
+
 ## Quick Start
 
-### 1. Build Extension (Milestone 1)
+### 1. Build Extension
 
 ```bash
 npm install
 npm run build
 ```
 
-This compiles TypeScript and bundles the self-contained extension into the `dist/` directory.
+This compiles TypeScript, bundles the extension, and stages local WASM binaries into `dist/`.
 
 ### 2. Load into Chrome
 
 1. Open Chrome and navigate to `chrome://extensions`.
 2. Enable **Developer mode** (toggle in the top-right).
-3. Click **Load unpacked** and select the `dist/` folder in this repository.
-4. Open any webpage (e.g. Wikipedia or a news article).
-5. Hover over paragraphs, headers, and list items to see the thin indigo outline.
-6. Click any highlighted text block to listen via **System TTS**.
-7. Press `Esc` at any time to stop playback.
+3. Click **Load unpacked** and select the `dist/` folder.
+4. Open the extension popup:
+   - Select **Kokoro-82M (In-Browser AI)**.
+   - Click **Load Model** to initialize the in-browser neural engine.
+5. Open any webpage (e.g. Wikipedia or an online quiz).
+6. Hover over any text block or answer button to see the outline.
+7. Click the highlighted block to speak with Kokoro AI. Press `Esc` at any time to stop.
 
 ---
 
-## Running the Local TTS Server (Milestones 1.5 - M2)
-
-The companion server provides HTTP audio synthesis for neural models.
-
-### Start the Server
+## Testing & Quality Assurance
 
 ```bash
-python3 tts-server/run.py --port 8000
-```
-
-The server starts immediately on `http://127.0.0.1:8000`. If FastAPI is installed, it runs via uvicorn; otherwise, it automatically uses the standard library zero-dependency HTTP server.
-
-### Adding Neural Models
-
-- **Kokoro-82M (M2)**:
-  ```bash
-  pip install kokoro soundfile numpy
-  ```
-- **MeloTTS (M2.1 - Australian English)**:
-  ```bash
-  pip install melotts
-  ```
-
----
-
-## Build Gates & Architecture
-
-- **M1**: DOM block segmentation, hover outline, click-to-read, `Esc` to stop, System TTS adapter, swappable `prepare`/`play` provider abstraction.
-- **M1.5**: Local Python server, zero-dependency `MockNeuralProvider`, HTTP communication, and popup server status indicator.
-- **M2**: Kokoro-82M end-to-end integration and compound LRU caching (`${provider}:${voice}:${speed}:${text}`).
-- **M2.1**: MeloTTS adapter with `EN-AU` Australian English voice.
-
----
-
-## Extension Structure
-
-```text
-tts-hover-app/
-├── extension/
-│   ├── manifest.json              # Manifest V3 configuration
-│   ├── icons/                     # 16, 48, 128 pixel icons
-│   ├── content/
-│   │   ├── detector.ts            # DOM text block segmentation
-│   │   ├── overlay.ts             # Lightweight outline renderer
-│   │   ├── overlay.css            # Selected & speaking styles
-│   │   ├── interaction.ts         # Pointermove, click, and Esc handlers
-│   │   └── index.ts               # Content script entrypoint
-│   ├── speech/
-│   │   ├── types.ts               # TTSProvider, Voice, SpeechOptions contracts
-│   │   ├── normalizer.ts          # Conservative speech text normalizer
-│   │   ├── cache.ts               # Compound-key LRU speech cache
-│   │   ├── client.ts              # Unified TTSClient manager
-│   │   └── providers/
-│   │       ├── system.ts          # Browser speechSynthesis adapter
-│   │       └── remote.ts          # HTTP Web Audio API adapter
-│   ├── popup/
-│   │   ├── popup.html             # Clean settings UI
-│   │   ├── popup.css              # Minimal dark styling
-│   │   └── popup.ts               # Provider/voice switcher & server ping
-│   └── background.ts              # Background service worker
-│
-├── tts-server/
-│   ├── server.py                  # FastAPI + stdlib fallback server
-│   ├── run.py                     # Server CLI runner
-│   ├── requirements.txt           # Python dependencies
-│   └── providers/
-│       ├── base.py                # Abstract BaseTTSProvider
-│       ├── mock_neural.py         # Instant synthetic audio generator
-│       ├── kokoro.py              # Kokoro-82M adapter
-│       └── melo.py                # MeloTTS adapter (EN-AU)
-│
-└── dist/                          # Built, unpacked Chrome extension
+npm run typecheck   # Strict TypeScript typechecking
+npm test            # 14 automated unit tests
+npm run build       # Verified production packaging
 ```

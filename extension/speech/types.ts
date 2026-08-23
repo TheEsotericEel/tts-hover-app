@@ -23,6 +23,13 @@ export type PreparedSpeechData =
       buffer: AudioBuffer;
       audioContext?: AudioContext;
       speed?: number;
+    }
+  | {
+      type: 'offscreen';
+      cacheKey: string;
+      text: string;
+      voice?: string;
+      speed?: number;
     };
 
 export interface PreparedSpeech {
@@ -41,7 +48,7 @@ export interface TTSProvider {
 
 export interface UserSettings {
   enabled: boolean;
-  provider: string; // 'system' | 'kokoro' | 'melo' | 'mock'
+  provider: string; // 'system' | 'kokoro-browser' | 'kokoro' | 'melo' | 'mock'
   voice: string;
   speed: number;
   serverUrl: string; // e.g. 'http://127.0.0.1:8000'
@@ -49,8 +56,8 @@ export interface UserSettings {
 
 export const DEFAULT_SETTINGS: UserSettings = {
   enabled: true,
-  provider: 'system',
-  voice: 'default',
+  provider: 'kokoro-browser',
+  voice: 'af_heart',
   speed: 1.0,
   serverUrl: 'http://127.0.0.1:8000',
 };

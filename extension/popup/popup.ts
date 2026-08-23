@@ -1,5 +1,5 @@
 import { TTSClient } from '../speech/client';
-import { UserSettings } from '../speech/types';
+import { BrowserKokoroTTSProvider } from '../speech/providers/browser_kokoro';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const ttsClient = new TTSClient();
@@ -14,11 +14,62 @@ document.addEventListener('DOMContentLoaded', async () => {
   const serverDot = document.getElementById('server-dot') as HTMLSpanElement;
   const serverStatusText = document.getElementById('server-status-text') as HTMLSpanElement;
 
-  // Initialize UI state from saved settings
+  // In-Browser Model Card Elements
+  const kokoroModelCard = document.getElementById('kokoro-model-card') as HTMLDivElement;
+  const modelDot = document.getElementById('model-dot') as HTMLSpanElement;
+  const modelStatusText = document.getElementById('model-status-text') as HTMLSpanElement;
+  const modelDeviceBadge = document.getElementById('model-device-badge') as HTMLSpanElement;
+  const btnLoadModel = document.getElementById('btn-load-model') as HTMLButtonElement;
+
+  // Initialize UI state
   toggleEnabled.checked = settings.enabled;
-  selectProvider.value = settings.provider || 'system';
+  selectProvider.value = settings.provider || 'kokoro-browser';
   sliderSpeed.value = String(settings.speed || 1.0);
   speedValue.textContent = `${Number(sliderSpeed.value).toFixed(2)}x`;
+
+  function updateModelCardVisibility(providerId: string) {
+    if (providerId === 'kokoro-browser') {
+      kokoroModelCard.style.display = 'flex';
+      checkKokoroModelStatus();
+    } else {
+      kokoroModelCard.style.display = 'none';
+    }
+  }
+
+  async function checkKokoroModelStatus() {
+    const browserKokoro = ttsClient.getProvider('kokoro-browser') as BrowserKokoroTTSProvider;
+    if (!browserKokoro) return;
+
+    try {
+      const info = await browserKokoro.getStatus();
+      modelDeviceBadge.textContent = info.device ? info.device.toUpperCase() : 'WASM';
+
+      if (info.status === 'ready') {
+        modelDot.className = 'model-dot ready';
+        modelStatusText.textContent = 'Kokoro AI: Ready';
+        btnLoadModel.textContent = 'Model Ready';
+        btnLoadModel.disabled = true;
+      } else if (info.status === 'loading') {
+        modelDot.className = 'model-dot loading';
+        modelStatusText.textContent = 'Kokoro AI: Loading...';
+        btnLoadModel.textContent = 'Loading...';
+        btnLoadModel.disabled = true;
+      } else if (info.status === 'error') {
+        modelDot.className = 'model-dot error';
+        modelStatusText.textContent = 'Kokoro AI: Failed';
+        btnLoadModel.textContent = 'Retry Loading';
+        btnLoadModel.disabled = false;
+      } else {
+        modelDot.className = 'model-dot not-loaded';
+        modelStatusText.textContent = 'Kokoro AI: Not loaded';
+        btnLoadModel.textContent = 'Load Model';
+        btnLoadModel.disabled = false;
+      }
+    } catch {
+      modelDot.className = 'model-dot not-loaded';
+      modelStatusText.textContent = 'Kokoro AI: Not loaded';
+    }
+  }
 
   async function populateVoices(providerId: string, selectedVoiceId?: string) {
     selectVoice.innerHTML = '<option value="default">Loading voices...</option>';
@@ -60,7 +111,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Load initial voices
+  // Load initial voices and status
+  updateModelCardVisibility(selectProvider.value);
   await populateVoices(selectProvider.value, settings.voice);
   await checkServerStatus();
 
@@ -72,6 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 2. Change Provider
   selectProvider.addEventListener('change', async () => {
     const newProvider = selectProvider.value;
+    updateModelCardVisibility(newProvider);
     await populateVoices(newProvider);
     await ttsClient.updateSettings({
       provider: newProvider,
@@ -79,12 +132,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // 3. Change Voice
+  // 3. Load Model Button
+  btnLoadModel.addEventListener('click', async () => {
+    const browserKokoro = ttsClient.getProvider('kokoro-browser') as BrowserKokoroTTSProvider;
+    if (!browserKokoro) return;
+
+    modelDot.className = 'model-dot loading';
+    modelStatusText.textContent = 'Kokoro AI: Loading...';
+    btnLoadModel.textContent = 'Loading...';
+    btnLoadModel.disabled = true;
+
+    try {
+      await browserKokoro.loadModel();
+      modelDot.className = 'model-dot ready';
+      modelStatusText.textContent = 'Kokoro AI: Ready';
+      btnLoadModel.textContent = 'Model Ready';
+      btnLoadModel.disabled = true;
+    } catch (err: any) {
+      console.error('Failed to load in-browser Kokoro model:', err);
+      modelDot.className = 'model-dot error';
+      modelStatusText.textContent = 'Kokoro AI: Load Failed';
+      btnLoadModel.textContent = 'Retry Loading';
+      btnLoadModel.disabled = false;
+    }
+  });
+
+  // 4. Change Voice
   selectVoice.addEventListener('change', async () => {
     await ttsClient.updateSettings({ voice: selectVoice.value });
   });
 
-  // 4. Change Speed
+  // 5. Change Speed
   sliderSpeed.addEventListener('input', () => {
     const speed = parseFloat(sliderSpeed.value);
     speedValue.textContent = `${speed.toFixed(2)}x`;
@@ -95,7 +173,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await ttsClient.updateSettings({ speed });
   });
 
-  // 5. Test Voice Button
+  // 6. Test Voice Button
   let isTesting = false;
   btnTestVoice.addEventListener('click', async () => {
     if (isTesting) {

@@ -2,17 +2,18 @@ import { TTSProvider, Voice, SpeechOptions, PreparedSpeech, UserSettings, DEFAUL
 import { TextNormalizer } from './normalizer';
 import { SpeechCache } from './cache';
 import { SystemTTSProvider } from './providers/system';
+import { BrowserKokoroTTSProvider } from './providers/browser_kokoro';
 import { RemoteServerTTSProvider } from './providers/remote';
 
 export class TTSClient {
   private providers = new Map<string, TTSProvider>();
   private settings: UserSettings = { ...DEFAULT_SETTINGS };
   private cache = new SpeechCache(50);
-  
+
   // Decoupled preparation vs playback abort controllers
   private prepareAbortController: AbortController | null = null;
   private playbackAbortController: AbortController | null = null;
-  
+
   private isSpeaking = false;
   private prepareGeneration = 0;
 
@@ -22,11 +23,13 @@ export class TTSClient {
   }
 
   private registerDefaultProviders(): void {
+    const browserKokoro = new BrowserKokoroTTSProvider();
     const systemProvider = new SystemTTSProvider();
     const mockProvider = new RemoteServerTTSProvider('mock', 'Mock Neural Engine', this.settings.serverUrl);
-    const kokoroProvider = new RemoteServerTTSProvider('kokoro', 'Kokoro-82M (Local)', this.settings.serverUrl);
-    const meloProvider = new RemoteServerTTSProvider('melo', 'MeloTTS (Local)', this.settings.serverUrl);
+    const kokoroProvider = new RemoteServerTTSProvider('kokoro', 'Kokoro-82M (Local Server)', this.settings.serverUrl);
+    const meloProvider = new RemoteServerTTSProvider('melo', 'MeloTTS (Local Server)', this.settings.serverUrl);
 
+    this.providers.set(browserKokoro.id, browserKokoro);
     this.providers.set(systemProvider.id, systemProvider);
     this.providers.set(mockProvider.id, mockProvider);
     this.providers.set(kokoroProvider.id, kokoroProvider);
@@ -65,10 +68,14 @@ export class TTSClient {
     }
   }
 
+  public getProvider(id: string): TTSProvider | undefined {
+    return this.providers.get(id);
+  }
+
   public getActiveProvider(): TTSProvider {
     const provider = this.providers.get(this.settings.provider);
     if (!provider) {
-      return this.providers.get('system')!;
+      return this.providers.get('kokoro-browser') || this.providers.get('system')!;
     }
     return provider;
   }
@@ -123,7 +130,7 @@ export class TTSClient {
         return null;
       }
       console.warn(`[TTSClient] Prepare failed with provider ${provider.id}:`, err);
-      // Fallback to system provider if neural provider fails
+      // Fallback to system provider if in-browser neural or server provider fails
       if (provider.id !== 'system') {
         const sysProvider = this.providers.get('system')!;
         const fallbackPrepared = await sysProvider.prepare(normalizedText, { voice: 'default', speed, signal });

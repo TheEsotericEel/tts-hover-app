@@ -1,12 +1,34 @@
-import { test, describe } from 'node:test';
+import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { TTSClient } from '../extension/speech/client.ts';
+import { BrowserKokoroTTSProvider } from '../extension/speech/providers/browser_kokoro.ts';
 
-describe('TTSClient Lifecycle & Fallback', () => {
+describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
+  beforeEach(() => {
+    (globalThis as any).chrome = {
+      runtime: {
+        sendMessage: async (msg: any) => {
+          if (msg.action === 'KOKORO_PREPARE') {
+            return { ok: true, cacheKey: msg.cacheKey };
+          }
+          if (msg.action === 'KOKORO_PLAY') {
+            return { ok: true };
+          }
+          if (msg.action === 'KOKORO_STOP') {
+            return { ok: true };
+          }
+          if (msg.action === 'KOKORO_GET_STATUS') {
+            return { status: 'ready', device: 'wasm', dtype: 'q8' };
+          }
+          return { ok: true };
+        },
+      },
+    };
+  });
+
   test('decouples preparation cancellation from playback', async () => {
     const client = new TTSClient();
 
-    // Mock speech synthesis on window and global SpeechSynthesisUtterance
     class MockUtterance {
       text: string;
       voice: any = null;
@@ -34,6 +56,8 @@ describe('TTSClient Lifecycle & Fallback', () => {
       },
     };
 
+    await client.updateSettings({ provider: 'system' });
+
     // Prepare speech for block 1
     const prepared1 = await client.prepare('Question text for first block');
     assert.notStrictEqual(prepared1, null);
@@ -44,7 +68,7 @@ describe('TTSClient Lifecycle & Fallback', () => {
     const prepared2 = await client.prepare('Answer A option text');
     assert.notStrictEqual(prepared2, null);
 
-    // Play prepared1 (should succeed and NOT be self-aborted by prepareAbortController!)
+    // Play prepared1 (should succeed and NOT be self-aborted)
     let playError = null;
     try {
       await client.play(prepared1!);
@@ -53,6 +77,43 @@ describe('TTSClient Lifecycle & Fallback', () => {
     }
 
     assert.strictEqual(playError, null);
+  });
+
+  test('handles offscreen audio cacheKeys in BrowserKokoroTTSProvider', async () => {
+    let playActionReceived = false;
+
+    (globalThis as any).chrome = {
+      runtime: {
+        sendMessage: async (msg: any) => {
+          if (msg.action === 'KOKORO_PREPARE') {
+            return { ok: true, cacheKey: msg.cacheKey };
+          }
+          if (msg.action === 'KOKORO_PLAY') {
+            playActionReceived = true;
+            return { ok: true };
+          }
+          if (msg.action === 'KOKORO_STOP') {
+            return { ok: true };
+          }
+          if (msg.action === 'KOKORO_GET_STATUS') {
+            return { status: 'ready', device: 'wasm', dtype: 'q8' };
+          }
+          return { ok: true };
+        },
+      },
+    };
+
+    const provider = new BrowserKokoroTTSProvider();
+    const voices = await provider.listVoices();
+    assert.strictEqual(voices.length >= 5, true);
+    assert.strictEqual(voices[0].id, 'af_heart');
+
+    const prepared = await provider.prepare('Synthesize in-browser speech', { voice: 'af_heart', speed: 1.0 });
+    assert.strictEqual(prepared.providerId, 'kokoro-browser');
+    assert.strictEqual(prepared.data.type, 'offscreen');
+
+    await provider.play(prepared);
+    assert.strictEqual(playActionReceived, true);
   });
 
   test('routes fallback preparation to the provider that prepared it', async () => {
