@@ -11,6 +11,10 @@ export class InteractionController {
   private rafId: number | null = null;
   private lastPointerPos = { x: 0, y: 0 };
 
+  // 300 ms Hover Dwell Timer
+  private hoverDwellTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly hoverDwellMs = 300;
+
   constructor(ttsClient: TTSClient) {
     this.ttsClient = ttsClient;
     this.overlay = new OverlayManager();
@@ -57,6 +61,7 @@ export class InteractionController {
     const block = DOMDetector.detectAtPoint(x, y);
 
     if (!block) {
+      this.clearHoverDwell();
       if (!this.isSpeaking) {
         this.overlay.hide();
         this.currentBlock = null;
@@ -66,17 +71,29 @@ export class InteractionController {
 
     // If we moved to a new block
     if (!this.currentBlock || this.currentBlock.element !== block.element) {
+      this.clearHoverDwell();
       this.currentBlock = block;
 
-      // Show selection overlay on the new element
+      // 1. Show selection outline immediately for crisp visual responsiveness
       this.overlay.show(block.element);
 
-      // If not currently speaking another block, start preparing speech for this block in background
+      // 2. Schedule speech preparation only after dwelling on the block for 300ms
       if (!this.isSpeaking) {
-        this.ttsClient.prepare(block.text).catch((err) => {
-          console.debug('[InteractionController] Pre-buffering background notice:', err);
-        });
+        this.hoverDwellTimer = setTimeout(() => {
+          if (this.currentBlock?.element === block.element && !this.isSpeaking) {
+            this.ttsClient.prepare(block.text).catch((err) => {
+              console.debug('[InteractionController] Dwell pre-buffering notice:', err);
+            });
+          }
+        }, this.hoverDwellMs);
       }
+    }
+  }
+
+  private clearHoverDwell(): void {
+    if (this.hoverDwellTimer !== null) {
+      clearTimeout(this.hoverDwellTimer);
+      this.hoverDwellTimer = null;
     }
   }
 
@@ -91,6 +108,7 @@ export class InteractionController {
       e.preventDefault();
       e.stopPropagation();
 
+      this.clearHoverDwell();
       await this.readCurrentBlock();
     }
   };
@@ -119,6 +137,7 @@ export class InteractionController {
   };
 
   public stopPlayback(): void {
+    this.clearHoverDwell();
     this.ttsClient.stop();
     this.isSpeaking = false;
     this.overlay.setSpeaking(false);

@@ -10,6 +10,9 @@ export class TTSClient {
   private settings: UserSettings = { ...DEFAULT_SETTINGS };
   private cache = new SpeechCache(50);
 
+  // Single-flight deduplication map: prevents duplicate synthesis for hover + click
+  private inFlightPrepares = new Map<string, Promise<PreparedSpeech | null>>();
+
   // Decoupled preparation vs playback abort controllers
   private prepareAbortController: AbortController | null = null;
   private playbackAbortController: AbortController | null = null;
@@ -87,8 +90,8 @@ export class TTSClient {
   }
 
   /**
-   * Prepares speech for given text (normalizes, checks cache, prepares via provider).
-   * Automatically aborts any obsolete prior prepare operations without affecting playback.
+   * Prepares speech for given text (normalizes, checks cache, single-flight in-flight deduplication).
+   * If a preparation is already underway (e.g. from hover), reuse its Promise directly.
    */
   public async prepare(text: string, options?: SpeechOptions): Promise<PreparedSpeech | null> {
     const normalizedText = TextNormalizer.normalize(text);
@@ -97,14 +100,22 @@ export class TTSClient {
     const provider = this.getActiveProvider();
     const voice = options?.voice ?? this.settings.voice;
     const speed = options?.speed ?? this.settings.speed;
+    const engineMode = options?.engineMode ?? this.settings.engineMode;
 
     const cacheKey = SpeechCache.generateKey(provider.id, voice, speed, normalizedText);
+
+    // 1. Check completed cache
     const cached = this.cache.get(cacheKey);
     if (cached) {
       return cached;
     }
 
-    // Cancel prior pending preparation only
+    // 2. Single-flight deduplication: reuse in-flight preparation promise if active
+    if (this.inFlightPrepares.has(cacheKey)) {
+      return this.inFlightPrepares.get(cacheKey)!;
+    }
+
+    // Cancel prior pending preparation if moving to a completely different text
     if (this.prepareAbortController) {
       this.prepareAbortController.abort();
     }
@@ -113,34 +124,42 @@ export class TTSClient {
 
     const currentGen = ++this.prepareGeneration;
 
-    try {
-      const prepared = await provider.prepare(normalizedText, {
-        voice,
-        speed,
-        signal,
-      });
+    const preparePromise = (async (): Promise<PreparedSpeech | null> => {
+      try {
+        const prepared = await provider.prepare(normalizedText, {
+          voice,
+          speed,
+          engineMode,
+          signal,
+        });
 
-      if (currentGen === this.prepareGeneration && !signal.aborted) {
-        this.cache.set(cacheKey, prepared);
-        return prepared;
-      }
-      return null;
-    } catch (err: unknown) {
-      if (signal.aborted || (err as { name?: string }).name === 'AbortError') {
-        return null;
-      }
-      console.warn(`[TTSClient] Prepare failed with provider ${provider.id}:`, err);
-      // Fallback to system provider if in-browser neural or server provider fails
-      if (provider.id !== 'system') {
-        const sysProvider = this.providers.get('system')!;
-        const fallbackPrepared = await sysProvider.prepare(normalizedText, { voice: 'default', speed, signal });
         if (currentGen === this.prepareGeneration && !signal.aborted) {
-          this.cache.set(cacheKey, fallbackPrepared);
-          return fallbackPrepared;
+          this.cache.set(cacheKey, prepared);
+          return prepared;
         }
+        return null;
+      } catch (err: unknown) {
+        if (signal.aborted || (err as { name?: string }).name === 'AbortError') {
+          return null;
+        }
+        console.warn(`[TTSClient] Prepare failed with provider ${provider.id}:`, err);
+        // Fallback to system provider if in-browser neural or server provider fails
+        if (provider.id !== 'system') {
+          const sysProvider = this.providers.get('system')!;
+          const fallbackPrepared = await sysProvider.prepare(normalizedText, { voice: 'default', speed, signal });
+          if (currentGen === this.prepareGeneration && !signal.aborted) {
+            this.cache.set(cacheKey, fallbackPrepared);
+            return fallbackPrepared;
+          }
+        }
+        return null;
+      } finally {
+        this.inFlightPrepares.delete(cacheKey);
       }
-      return null;
-    }
+    })();
+
+    this.inFlightPrepares.set(cacheKey, preparePromise);
+    return preparePromise;
   }
 
   /**
@@ -194,6 +213,8 @@ export class TTSClient {
       this.prepareAbortController.abort();
       this.prepareAbortController = null;
     }
+
+    this.inFlightPrepares.clear();
 
     // Abort active playback
     this.stopPlayback();

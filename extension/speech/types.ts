@@ -5,10 +5,22 @@ export interface Voice {
   provider: string;
 }
 
+export type EngineMode = 'auto' | 'wasm' | 'webgpu';
+
 export interface SpeechOptions {
   voice?: string;
   speed?: number;
+  engineMode?: EngineMode;
   signal?: AbortSignal; // Preparation abort signal only
+}
+
+export interface SpeechMetrics {
+  backend: string;
+  textChars: number;
+  synthesisMs: number;
+  audioDurationSec: number;
+  rtf: number;
+  cacheHit: boolean;
 }
 
 export type PreparedSpeechData =
@@ -30,6 +42,7 @@ export type PreparedSpeechData =
       text: string;
       voice?: string;
       speed?: number;
+      metrics?: SpeechMetrics;
     };
 
 export interface PreparedSpeech {
@@ -51,7 +64,9 @@ export interface UserSettings {
   provider: string; // 'system' | 'kokoro-browser' | 'kokoro' | 'melo' | 'mock'
   voice: string;
   speed: number;
+  engineMode: EngineMode; // 'wasm' (q8 92MB) | 'webgpu' (fp32 326MB) | 'auto'
   serverUrl: string; // e.g. 'http://127.0.0.1:8000'
+  idleTimeoutMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -59,5 +74,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   provider: 'kokoro-browser',
   voice: 'af_heart',
   speed: 1.0,
+  engineMode: 'wasm', // Default to lightweight 92.4 MB quantized WASM model
   serverUrl: 'http://127.0.0.1:8000',
+  idleTimeoutMinutes: 10,
 };

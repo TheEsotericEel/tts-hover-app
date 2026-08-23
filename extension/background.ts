@@ -2,23 +2,29 @@
 import { DEFAULT_SETTINGS } from './speech/types';
 
 let creatingOffscreenPromise: Promise<void> | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-async function ensureOffscreenDocument(): Promise<void> {
+async function hasOffscreenDocument(): Promise<boolean> {
   const offscreenUrl = chrome.runtime.getURL('offscreen/offscreen.html');
-
-  // Check existing contexts if available
   if ('getContexts' in chrome.runtime) {
     const contexts = await (chrome.runtime as any).getContexts({
       contextTypes: ['OFFSCREEN_DOCUMENT'],
       documentUrls: [offscreenUrl],
     });
-    if (contexts.length > 0) {
-      return;
-    }
-  } else if ('hasDocument' in chrome.offscreen) {
-    if (await (chrome.offscreen as any).hasDocument()) {
-      return;
-    }
+    return contexts.length > 0;
+  }
+  if ('hasDocument' in chrome.offscreen) {
+    return await (chrome.offscreen as any).hasDocument();
+  }
+  return false;
+}
+
+async function ensureOffscreenDocument(): Promise<void> {
+  resetIdleTimer();
+
+  if (await hasOffscreenDocument()) {
+    return;
   }
 
   if (creatingOffscreenPromise) {
@@ -39,6 +45,26 @@ async function ensureOffscreenDocument(): Promise<void> {
   }
 }
 
+async function closeOffscreenDocument(): Promise<void> {
+  if (await hasOffscreenDocument()) {
+    try {
+      await chrome.offscreen.closeDocument();
+      console.log('[Background] Offscreen document closed after 10 min idle.');
+    } catch (err) {
+      console.debug('[Background] Error closing offscreen:', err);
+    }
+  }
+}
+
+function resetIdleTimer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+  }
+  idleTimer = setTimeout(() => {
+    closeOffscreenDocument();
+  }, IDLE_TIMEOUT_MS);
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   const stored = await chrome.storage.local.get('ttsSettings');
   if (!stored.ttsSettings) {
@@ -50,7 +76,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 // Stage 1 Lifecycle: Background worker handles only ENSURE_KOKORO_OFFSCREEN
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.target === 'kokoro-offscreen') {
-    // Explicitly ignore neural engine commands targeted directly to offscreen
+    resetIdleTimer();
     return false;
   }
 

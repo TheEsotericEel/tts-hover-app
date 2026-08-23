@@ -47,8 +47,18 @@
             <span id="model-dot" class="model-dot not-loaded"></span>
             <span id="model-status-text">Kokoro AI: Not loaded</span>
           </div>
-          <span id="model-device-badge" class="device-badge">WASM</span>
+          <span id="model-device-badge" class="device-badge">WASM (92M)</span>
         </div>
+
+        <div class="control-group sub-group">
+          <label for="select-engine-mode">AI Engine Mode</label>
+          <select id="select-engine-mode">
+            <option value="wasm">WASM q8 (92 MB - Fast & Low Resource)</option>
+            <option value="webgpu">WebGPU fp32 (326 MB - GPU Accelerated)</option>
+            <option value="auto">Auto (Best Available)</option>
+          </select>
+        </div>
+
         <div id="model-error-msg" class="model-error-box" style="display: none;"></div>
         <button id="btn-load-model" class="btn btn-sm btn-accent">
           Load Model

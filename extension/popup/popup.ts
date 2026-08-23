@@ -1,5 +1,6 @@
 import { TTSClient } from '../speech/client';
 import { BrowserKokoroTTSProvider } from '../speech/providers/browser_kokoro';
+import { EngineMode } from '../speech/types';
 
 document.addEventListener('DOMContentLoaded', async () => {
   const ttsClient = new TTSClient();
@@ -18,6 +19,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // In-Browser Model Card Elements
   const kokoroModelCard = document.getElementById('kokoro-model-card') as HTMLDivElement;
+  const selectEngineMode = document.getElementById('select-engine-mode') as HTMLSelectElement;
   const modelDot = document.getElementById('model-dot') as HTMLSpanElement;
   const modelStatusText = document.getElementById('model-status-text') as HTMLSpanElement;
   const modelDeviceBadge = document.getElementById('model-device-badge') as HTMLSpanElement;
@@ -27,6 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Initialize UI state
   toggleEnabled.checked = settings.enabled;
   selectProvider.value = settings.provider || 'kokoro-browser';
+  selectEngineMode.value = settings.engineMode || 'wasm';
   sliderSpeed.value = String(settings.speed || 1.0);
   speedValue.textContent = `${Number(sliderSpeed.value).toFixed(2)}x`;
 
@@ -54,7 +57,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       const info = await browserKokoro.getStatus();
-      modelDeviceBadge.textContent = info.device ? info.device.toUpperCase() : 'WASM';
+      const currentMode = selectEngineMode.value;
+      if (currentMode === 'wasm') {
+        modelDeviceBadge.textContent = 'WASM (92M)';
+      } else if (currentMode === 'webgpu') {
+        modelDeviceBadge.textContent = 'WEBGPU (326M)';
+      } else {
+        modelDeviceBadge.textContent = info.device ? info.device.toUpperCase() : 'AUTO';
+      }
 
       if (info.status === 'ready') {
         modelDot.className = 'model-dot ready';
@@ -64,7 +74,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         btnLoadModel.disabled = true;
       } else if (info.status === 'loading') {
         modelDot.className = 'model-dot loading';
-        modelStatusText.textContent = 'Kokoro AI: Loading...';
+        modelStatusText.textContent = info.progress ? `Kokoro AI: ${info.progress}%` : 'Kokoro AI: Loading...';
         modelErrorMsg.style.display = 'none';
         btnLoadModel.textContent = 'Loading...';
         btnLoadModel.disabled = true;
@@ -154,11 +164,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // 3. Load Model Button
+  // 3. Change Engine Mode (WASM vs WebGPU vs Auto)
+  selectEngineMode.addEventListener('change', async () => {
+    const engineMode = selectEngineMode.value as EngineMode;
+    await ttsClient.updateSettings({ engineMode });
+    btnLoadModel.disabled = false;
+    btnLoadModel.textContent = 'Load Model';
+    await checkKokoroModelStatus();
+  });
+
+  // 4. Load Model Button
   btnLoadModel.addEventListener('click', async () => {
     const browserKokoro = ttsClient.getProvider('kokoro-browser') as BrowserKokoroTTSProvider;
     if (!browserKokoro) return;
 
+    const engineMode = selectEngineMode.value as EngineMode;
     modelDot.className = 'model-dot loading';
     modelStatusText.textContent = 'Kokoro AI: Loading...';
     modelErrorMsg.style.display = 'none';
@@ -166,7 +186,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnLoadModel.disabled = true;
 
     try {
-      await browserKokoro.loadModel();
+      await browserKokoro.loadModel(engineMode);
       await checkKokoroModelStatus();
     } catch (err: any) {
       console.error('Failed to load in-browser Kokoro model:', err);
@@ -180,12 +200,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // 4. Change Voice
+  // 5. Change Voice
   selectVoice.addEventListener('change', async () => {
     await ttsClient.updateSettings({ voice: selectVoice.value });
   });
 
-  // 5. Change Speed
+  // 6. Change Speed
   sliderSpeed.addEventListener('input', () => {
     const speed = parseFloat(sliderSpeed.value);
     speedValue.textContent = `${speed.toFixed(2)}x`;
@@ -196,7 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await ttsClient.updateSettings({ speed });
   });
 
-  // 6. Test Voice Button
+  // 7. Test Voice Button
   let isTesting = false;
   btnTestVoice.addEventListener('click', async () => {
     if (isTesting) {
@@ -225,6 +245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       await ttsClient.speak(sampleText, {
         voice: selectVoice.value,
         speed: parseFloat(sliderSpeed.value),
+        engineMode: selectEngineMode.value as EngineMode,
       });
     } catch (err) {
       console.error('Test voice error:', err);

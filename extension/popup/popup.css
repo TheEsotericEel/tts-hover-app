@@ -233,6 +233,22 @@ select:focus {
   border-radius: 3px;
 }
 
+.control-group.sub-group {
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.control-group.sub-group label {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+.control-group.sub-group select {
+  padding: 4px 8px;
+  font-size: 11.5px;
+  background-color: var(--bg-primary);
+}
+
 .model-error-box {
   font-size: 11px;
   color: #fca5a5;

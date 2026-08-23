@@ -20,23 +20,33 @@ describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
             return { ok: true };
           }
           if (msg.target !== 'kokoro-offscreen') {
-            // Background ignores non-lifecycle messages
             return undefined;
           }
 
           // 2. Offscreen Listener Simulation (target === 'kokoro-offscreen')
           if (msg.action === 'KOKORO_GET_STATUS') {
-            return { status: 'ready', device: 'webgpu', dtype: 'fp32' };
+            return { status: 'ready', device: 'wasm', dtype: 'q8', engineMode: 'wasm' };
           }
           if (msg.action === 'KOKORO_LOAD_MODEL') {
-            return { ok: true, info: { status: 'ready', device: 'webgpu', dtype: 'fp32' } };
+            return { ok: true, info: { status: 'ready', device: 'wasm', dtype: 'q8', engineMode: msg.engineMode || 'wasm' } };
           }
           if (msg.action === 'KOKORO_PREPARE') {
             if (abortedRequests.has(msg.requestId)) {
               return { ok: false, error: 'Cancelled' };
             }
             offscreenAudioCache.set(msg.cacheKey, true);
-            return { ok: true, cacheKey: msg.cacheKey };
+            return {
+              ok: true,
+              cacheKey: msg.cacheKey,
+              metrics: {
+                backend: 'wasm q8',
+                textChars: msg.text.length,
+                synthesisMs: 45,
+                audioDurationSec: 2.1,
+                rtf: 0.021,
+                cacheHit: false,
+              },
+            };
           }
           if (msg.action === 'KOKORO_ABORT_PREPARE') {
             abortedRequests.add(msg.requestId);
@@ -56,6 +66,34 @@ describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
         },
       },
     };
+  });
+
+  test('single-flight deduplication shares the same in-flight Promise between hover and click', async () => {
+    const client = new TTSClient();
+
+    let synthesizeCallCount = 0;
+    const provider = client.getActiveProvider();
+    const originalPrepare = provider.prepare.bind(provider);
+    provider.prepare = async (text, opts) => {
+      synthesizeCallCount++;
+      // Simulate 50ms async neural synthesis
+      await new Promise((r) => setTimeout(r, 50));
+      return originalPrepare(text, opts);
+    };
+
+    // 1. Simulate Hover start
+    const hoverPromise = client.prepare('This is a test block to speak');
+
+    // 2. Simulate Click 10ms later on the exact same block
+    await new Promise((r) => setTimeout(r, 10));
+    const clickPromise = client.prepare('This is a test block to speak');
+
+    // Both should resolve to the exact same prepared speech object
+    const [hoverRes, clickRes] = await Promise.all([hoverPromise, clickPromise]);
+
+    assert.notStrictEqual(hoverRes, null);
+    assert.strictEqual(hoverRes, clickRes, 'Hover and click must share identical PreparedSpeech instance');
+    assert.strictEqual(synthesizeCallCount, 1, 'Synthesize must only be executed once via single-flight deduplication');
   });
 
   test('decouples preparation cancellation from playback', async () => {
@@ -117,10 +155,10 @@ describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
     // 1. Check status
     const status = await provider.getStatus();
     assert.strictEqual(status.status, 'ready');
-    assert.strictEqual(status.device, 'webgpu');
+    assert.strictEqual(status.device, 'wasm');
 
     // 2. Load model
-    await provider.loadModel();
+    await provider.loadModel('wasm');
 
     // 3. List voices
     const voices = await provider.listVoices();
@@ -128,7 +166,7 @@ describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
     assert.strictEqual(voices[0].id, 'af_heart');
 
     // 4. Prepare speech
-    const prepared = await provider.prepare('Synthesize in-browser speech with WebGPU', { voice: 'af_heart', speed: 1.0 });
+    const prepared = await provider.prepare('Synthesize in-browser speech with WASM q8', { voice: 'af_heart', speed: 1.0, engineMode: 'wasm' });
     assert.strictEqual(prepared.providerId, 'kokoro-browser');
     assert.strictEqual(prepared.data.type, 'offscreen');
     assert.strictEqual(offscreenAudioCache.has(prepared.data.cacheKey!), true);

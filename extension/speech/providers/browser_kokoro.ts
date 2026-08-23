@@ -1,4 +1,4 @@
-import { TTSProvider, Voice, SpeechOptions, PreparedSpeech } from '../types';
+import { TTSProvider, Voice, SpeechOptions, PreparedSpeech, EngineMode } from '../types';
 import { SpeechCache } from '../cache';
 
 export class BrowserKokoroTTSProvider implements TTSProvider {
@@ -20,11 +20,6 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     ];
   }
 
-  /**
-   * Two-stage messaging helper:
-   * 1. Ensure background worker has created the offscreen document
-   * 2. Send targeted command directly to the offscreen neural engine
-   */
   private async sendToOffscreen(message: any): Promise<any> {
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
       throw new Error('Chrome runtime messaging is unavailable.');
@@ -45,7 +40,7 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     });
   }
 
-  public async getStatus(): Promise<{ status: string; device?: string; dtype?: string; error?: string }> {
+  public async getStatus(): Promise<{ status: string; device?: string; dtype?: string; error?: string; progress?: number }> {
     try {
       const res = await this.sendToOffscreen({ action: 'KOKORO_GET_STATUS' });
       return res || { status: 'not_loaded' };
@@ -54,8 +49,8 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     }
   }
 
-  public async loadModel(): Promise<void> {
-    const res = await this.sendToOffscreen({ action: 'KOKORO_LOAD_MODEL' });
+  public async loadModel(engineMode: EngineMode = 'wasm'): Promise<void> {
+    const res = await this.sendToOffscreen({ action: 'KOKORO_LOAD_MODEL', engineMode });
     if (!res || !res.ok) {
       throw new Error(res?.error || 'Failed to initialize in-browser Kokoro model.');
     }
@@ -64,7 +59,8 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
   public async prepare(text: string, options: SpeechOptions): Promise<PreparedSpeech> {
     const voice = options.voice || 'af_heart';
     const speed = options.speed || 1.0;
-    const cacheKey = SpeechCache.generateKey(this.id, voice, speed, text);
+    const engineMode = options.engineMode || 'wasm';
+    const cacheKey = SpeechCache.generateKey(`${this.id}:${engineMode}`, voice, speed, text);
     const requestId = `req_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
 
     if (options.signal?.aborted) {
@@ -88,6 +84,7 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
         voice,
         speed,
         cacheKey,
+        engineMode,
         requestId,
       });
 
@@ -107,6 +104,7 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
           text,
           voice,
           speed,
+          metrics: res.metrics,
         },
       };
     } finally {
