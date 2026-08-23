@@ -10,7 +10,10 @@ env.useBrowserCache = true;
 
 // Configure WASM paths pointing to extension-relative assets
 if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
-  env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('wasm/');
+  const wasmBackend = (env.backends as any)?.onnx?.wasm;
+  if (wasmBackend) {
+    wasmBackend.wasmPaths = chrome.runtime.getURL('wasm/');
+  }
 }
 
 type ModelStatus = 'not_loaded' | 'loading' | 'ready' | 'error';
@@ -148,7 +151,7 @@ class OffscreenNeuralEngine {
 
     // Construct AudioBuffer in offscreen context
     const audioBuffer = ctx.createBuffer(1, rawAudio.length, sampleRate);
-    audioBuffer.copyToChannel(rawAudio, 0);
+    audioBuffer.copyToChannel(rawAudio as unknown as Float32Array, 0);
 
     // Store in LRU cache
     if (this.audioCache.size >= this.maxCacheSize) {
