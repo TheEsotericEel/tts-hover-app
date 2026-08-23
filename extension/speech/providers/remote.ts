@@ -45,7 +45,6 @@ export class RemoteServerTTSProvider implements TTSProvider {
       }));
     } catch (err) {
       console.warn(`[RemoteServerTTSProvider:${this.id}] Voice lookup failed:`, err);
-      // Fallback voice placeholder
       return [{ id: 'default', name: `${this.name} Default`, lang: 'en', provider: this.id }];
     }
   }
@@ -64,7 +63,7 @@ export class RemoteServerTTSProvider implements TTSProvider {
         voice: options.voice || 'default',
         speed: options.speed || 1.0,
       }),
-      signal: options.signal,
+      signal: options.signal, // Ephemeral preparation signal
     });
 
     if (!response.ok) {
@@ -76,54 +75,61 @@ export class RemoteServerTTSProvider implements TTSProvider {
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
     return {
-      type: 'audio',
-      buffer: audioBuffer,
-      audioContext: ctx,
-      options,
+      providerId: this.id,
+      data: {
+        type: 'audio',
+        buffer: audioBuffer,
+        audioContext: ctx,
+        speed: options.speed,
+      },
     };
   }
 
-  public async play(prepared: PreparedSpeech): Promise<void> {
-    if (prepared.type !== 'audio' || !prepared.buffer) {
-      throw new Error('Invalid prepared speech object for RemoteServerTTSProvider');
+  public async play(prepared: PreparedSpeech, playbackSignal?: AbortSignal): Promise<void> {
+    if (prepared.data.type !== 'audio' || !prepared.data.buffer) {
+      throw new Error('Invalid prepared speech data for RemoteServerTTSProvider');
     }
 
     this.stop();
 
-    const ctx = prepared.audioContext || this.getAudioContext();
+    if (playbackSignal?.aborted) {
+      return;
+    }
+
+    const ctx = prepared.data.audioContext || this.getAudioContext();
     if (ctx.state === 'suspended') {
       await ctx.resume();
     }
 
     const source = ctx.createBufferSource();
-    source.buffer = prepared.buffer;
+    source.buffer = prepared.data.buffer;
     source.connect(ctx.destination);
     this.currentSource = source;
 
-    return new Promise((resolve) => {
+    return new Promise<void>((resolve) => {
       let isEnded = false;
 
-      source.onended = () => {
+      const finish = () => {
         if (!isEnded) {
           isEnded = true;
+          cleanup();
           this.currentSource = null;
           resolve();
         }
       };
 
-      if (prepared.options.signal?.aborted) {
-        this.stop();
-        resolve();
-        return;
-      }
+      source.onended = () => finish();
 
-      prepared.options.signal?.addEventListener('abort', () => {
+      const onAbort = () => {
         this.stop();
-        if (!isEnded) {
-          isEnded = true;
-          resolve();
-        }
-      });
+        finish();
+      };
+
+      const cleanup = () => {
+        playbackSignal?.removeEventListener('abort', onAbort);
+      };
+
+      playbackSignal?.addEventListener('abort', onAbort);
 
       source.start(0);
     });
@@ -135,7 +141,7 @@ export class RemoteServerTTSProvider implements TTSProvider {
         this.currentSource.stop();
         this.currentSource.disconnect();
       } catch {
-        // Source may have already ended
+        // Already stopped
       }
       this.currentSource = null;
     }

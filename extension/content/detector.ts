@@ -1,7 +1,7 @@
 /**
  * Smart DOM text block detector for Point & Read.
- * Identifies coherent readable blocks (p, h1-h6, li, blockquote, dt, dd, etc.)
- * without accidentally selecting entire page wrappers or tiny fragmented words.
+ * Identifies coherent readable blocks (p, h1-h6, li, blockquote, buttons/quiz options, etc.)
+ * without accidentally selecting entire page wrappers or tiny fragmented characters.
  */
 
 export interface DetectedBlock {
@@ -17,13 +17,16 @@ const INLINE_TAGS = new Set([
 
 const BLOCK_TAGS = new Set([
   'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'LI', 'BLOCKQUOTE', 'PRE',
-  'FIGCAPTION', 'DT', 'DD', 'LABEL', 'SUMMARY'
+  'FIGCAPTION', 'DT', 'DD', 'LABEL', 'SUMMARY', 'BUTTON'
+]);
+
+const READABLE_ROLES = new Set([
+  'button', 'radio', 'checkbox', 'option', 'tab', 'treeitem', 'menuitem', 'listitem'
 ]);
 
 const IGNORED_TAGS = new Set([
   'SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'OBJECT', 'EMBED', 'SVG', 'CANVAS',
-  'VIDEO', 'AUDIO', 'IMG', 'PICTURE', 'SOURCE', 'TRACK', 'INPUT', 'TEXTAREA',
-  'SELECT', 'BUTTON', 'DIALOG'
+  'VIDEO', 'AUDIO', 'IMG', 'PICTURE', 'SOURCE', 'TRACK', 'TEXTAREA', 'SELECT', 'DIALOG'
 ]);
 
 const CONTAINER_TAGS = new Set([
@@ -54,29 +57,36 @@ export class DOMDetector {
 
     let current: HTMLElement | null = startEl;
 
-    // 1. If clicked/hovered directly on an inline element (span, a, em, strong), climb up to containing block
-    while (current && current.parentElement && INLINE_TAGS.has(current.tagName)) {
-      current = current.parentElement;
+    // 1. If clicked/hovered inside an interactive widget (e.g. Button or ARIA role), climb up to that control
+    while (current && current.parentElement && !CONTAINER_TAGS.has(current.tagName)) {
+      if (current.tagName === 'BUTTON' || (current.getAttribute('role') && READABLE_ROLES.has(current.getAttribute('role')!))) {
+        return this.toDetectedBlock(current);
+      }
+      if (INLINE_TAGS.has(current.tagName)) {
+        current = current.parentElement;
+      } else {
+        break;
+      }
     }
 
     if (!current || this.isIgnored(current)) {
       return null;
     }
 
-    // 2. If it's an explicit semantic text block (p, h1-h6, li, blockquote, etc.), use it
+    // 2. If it's an explicit semantic text block (p, h1-h6, li, blockquote, button, etc.), use it
     if (BLOCK_TAGS.has(current.tagName)) {
       return this.toDetectedBlock(current);
     }
 
     // 3. If it's a generic element like <div>, check if it's a leaf text container or a large wrapper
     while (current && !CONTAINER_TAGS.has(current.tagName)) {
-      if (BLOCK_TAGS.has(current.tagName)) {
+      if (BLOCK_TAGS.has(current.tagName) || (current.getAttribute('role') && READABLE_ROLES.has(current.getAttribute('role')!))) {
         return this.toDetectedBlock(current);
       }
 
       // If current is a div, verify it doesn't contain child block elements
       if (current.tagName === 'DIV') {
-        const hasChildBlocks = current.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, table, ul, ol');
+        const hasChildBlocks = current.querySelector('p, h1, h2, h3, h4, h5, h6, li, blockquote, table, ul, ol, button');
         if (!hasChildBlocks) {
           // Leaf div with text
           return this.toDetectedBlock(current);
@@ -96,6 +106,10 @@ export class DOMDetector {
 
   private static isIgnored(el: HTMLElement): boolean {
     if (IGNORED_TAGS.has(el.tagName)) return true;
+    // Plain text input / password input
+    if (el.tagName === 'INPUT' && !['button', 'submit', 'reset', 'radio', 'checkbox'].includes((el as HTMLInputElement).type)) {
+      return true;
+    }
     if (el.getAttribute('aria-hidden') === 'true') return true;
     if (el.classList.contains('tts-reader-overlay')) return true;
 

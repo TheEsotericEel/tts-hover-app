@@ -8,8 +8,11 @@ export class TTSClient {
   private providers = new Map<string, TTSProvider>();
   private settings: UserSettings = { ...DEFAULT_SETTINGS };
   private cache = new SpeechCache(50);
-  private currentAbortController: AbortController | null = null;
-  private activePrepared: PreparedSpeech | null = null;
+  
+  // Decoupled preparation vs playback abort controllers
+  private prepareAbortController: AbortController | null = null;
+  private playbackAbortController: AbortController | null = null;
+  
   private isSpeaking = false;
   private prepareGeneration = 0;
 
@@ -78,7 +81,7 @@ export class TTSClient {
 
   /**
    * Prepares speech for given text (normalizes, checks cache, prepares via provider).
-   * Automatically aborts any obsolete prior prepare operations.
+   * Automatically aborts any obsolete prior prepare operations without affecting playback.
    */
   public async prepare(text: string, options?: SpeechOptions): Promise<PreparedSpeech | null> {
     const normalizedText = TextNormalizer.normalize(text);
@@ -94,12 +97,12 @@ export class TTSClient {
       return cached;
     }
 
-    // Cancel prior pending prepare request
-    if (this.currentAbortController) {
-      this.currentAbortController.abort();
+    // Cancel prior pending preparation only
+    if (this.prepareAbortController) {
+      this.prepareAbortController.abort();
     }
-    this.currentAbortController = new AbortController();
-    const signal = options?.signal || this.currentAbortController.signal;
+    this.prepareAbortController = new AbortController();
+    const signal = options?.signal || this.prepareAbortController.signal;
 
     const currentGen = ++this.prepareGeneration;
 
@@ -110,7 +113,6 @@ export class TTSClient {
         signal,
       });
 
-      // Guard against race condition: only cache if generation is still current and not aborted
       if (currentGen === this.prepareGeneration && !signal.aborted) {
         this.cache.set(cacheKey, prepared);
         return prepared;
@@ -118,31 +120,43 @@ export class TTSClient {
       return null;
     } catch (err: unknown) {
       if (signal.aborted || (err as { name?: string }).name === 'AbortError') {
-        return null; // Normal cancellation
+        return null;
       }
       console.warn(`[TTSClient] Prepare failed with provider ${provider.id}:`, err);
       // Fallback to system provider if neural provider fails
       if (provider.id !== 'system') {
         const sysProvider = this.providers.get('system')!;
-        return sysProvider.prepare(normalizedText, { voice: 'default', speed, signal });
+        const fallbackPrepared = await sysProvider.prepare(normalizedText, { voice: 'default', speed, signal });
+        if (currentGen === this.prepareGeneration && !signal.aborted) {
+          this.cache.set(cacheKey, fallbackPrepared);
+          return fallbackPrepared;
+        }
       }
-      throw err;
+      return null;
     }
   }
 
+  /**
+   * Plays prepared speech. Routes to the specific provider that prepared it.
+   */
   public async play(prepared: PreparedSpeech): Promise<void> {
-    this.stop();
-    this.isSpeaking = true;
-    this.activePrepared = prepared;
+    // Stop any active playback before starting a new one
+    this.stopPlayback();
 
-    const provider = this.getActiveProvider();
+    // Create a new playback abort controller
+    this.playbackAbortController = new AbortController();
+    const playbackSignal = this.playbackAbortController.signal;
+
+    this.isSpeaking = true;
+
+    // Route playback to the provider that prepared the object (handles fallback smoothly)
+    const provider = this.providers.get(prepared.providerId) || this.getActiveProvider();
 
     try {
-      await provider.play(prepared);
+      await provider.play(prepared, playbackSignal);
     } finally {
-      if (this.activePrepared === prepared) {
+      if (!playbackSignal.aborted) {
         this.isSpeaking = false;
-        this.activePrepared = null;
       }
     }
   }
@@ -154,10 +168,10 @@ export class TTSClient {
     }
   }
 
-  public stop(): void {
-    if (this.currentAbortController) {
-      this.currentAbortController.abort();
-      this.currentAbortController = null;
+  public stopPlayback(): void {
+    if (this.playbackAbortController) {
+      this.playbackAbortController.abort();
+      this.playbackAbortController = null;
     }
 
     for (const provider of this.providers.values()) {
@@ -165,7 +179,17 @@ export class TTSClient {
     }
 
     this.isSpeaking = false;
-    this.activePrepared = null;
+  }
+
+  public stop(): void {
+    // Abort pending preparation
+    if (this.prepareAbortController) {
+      this.prepareAbortController.abort();
+      this.prepareAbortController = null;
+    }
+
+    // Abort active playback
+    this.stopPlayback();
   }
 
   public get speaking(): boolean {

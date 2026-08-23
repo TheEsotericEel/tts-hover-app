@@ -15,9 +15,6 @@ export class TextNormalizer {
     text = text.replace(/[\u200B-\u200D\uFEFF]/g, '');
     text = text.replace(/\u00A0/g, ' ');
 
-    // Normalize multiple whitespace, tabs, and newlines to single spaces
-    text = text.replace(/\s+/g, ' ').trim();
-
     // Replace markdown / bullet points at start of line
     text = text.replace(/^[-*•–—]\s+/, '');
 
@@ -45,6 +42,9 @@ export class TextNormalizer {
     // Simplify URLs to readable domain names (e.g., https://example.com/foo -> link to example.com)
     text = text.replace(/https?:\/\/(?:www\.)?([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})[^\s]*/gi, 'link to $1');
 
-    return text.trim();
+    // Final whitespace collapse and trim
+    text = text.replace(/\s+/g, ' ').trim();
+
+    return text;
   }
 }

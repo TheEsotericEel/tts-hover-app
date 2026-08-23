@@ -11,14 +11,13 @@ export class SystemTTSProvider implements TTSProvider {
 
     let synthVoices = window.speechSynthesis.getVoices();
     if (synthVoices.length === 0) {
-      // Sometimes getVoices() is asynchronous on initial load
       await new Promise<void>((resolve) => {
         const handler = () => {
           window.speechSynthesis.removeEventListener('voiceschanged', handler);
           resolve();
         };
         window.speechSynthesis.addEventListener('voiceschanged', handler);
-        setTimeout(resolve, 300); // Safety timeout
+        setTimeout(resolve, 300);
       });
       synthVoices = window.speechSynthesis.getVoices();
     }
@@ -40,54 +39,66 @@ export class SystemTTSProvider implements TTSProvider {
       throw new Error('SpeechSynthesis API is not supported in this browser context.');
     }
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (options.speed) {
-      utterance.rate = Math.max(0.1, Math.min(2.0, options.speed));
-    }
-
-    if (options.voice && options.voice !== 'default') {
-      const voices = window.speechSynthesis.getVoices();
-      const matched = voices.find((v) => v.voiceURI === options.voice || v.name === options.voice);
-      if (matched) {
-        utterance.voice = matched;
-      }
-    }
-
+    // Return pure stable prepared speech data without storing ephemeral AbortSignals
     return {
-      type: 'system',
-      text,
-      utterance,
-      options,
+      providerId: this.id,
+      data: {
+        type: 'system',
+        text,
+        voice: options.voice,
+        speed: options.speed,
+      },
     };
   }
 
-  public async play(prepared: PreparedSpeech): Promise<void> {
-    if (prepared.type !== 'system' || !prepared.utterance) {
-      throw new Error('Invalid prepared speech object for SystemTTSProvider');
+  public async play(prepared: PreparedSpeech, playbackSignal?: AbortSignal): Promise<void> {
+    if (prepared.data.type !== 'system') {
+      throw new Error('Invalid prepared speech data for SystemTTSProvider');
     }
 
     if (typeof window === 'undefined' || !window.speechSynthesis) {
       return;
     }
 
-    // Cancel any previous speech
+    // Cancel any previous speech playback
     window.speechSynthesis.cancel();
 
-    const utterance = prepared.utterance;
+    if (playbackSignal?.aborted) {
+      return;
+    }
 
-    return new Promise((resolve, reject) => {
+    const { text, voice: voiceId, speed } = prepared.data;
+    const utterance = new SpeechSynthesisUtterance(text);
+
+    if (speed) {
+      utterance.rate = Math.max(0.1, Math.min(2.0, speed));
+    }
+
+    if (voiceId && voiceId !== 'default') {
+      const voices = window.speechSynthesis.getVoices();
+      const matched = voices.find((v) => v.voiceURI === voiceId || v.name === voiceId);
+      if (matched) {
+        utterance.voice = matched;
+      }
+    }
+
+    return new Promise<void>((resolve, reject) => {
       let isResolved = false;
 
-      utterance.onend = () => {
+      const finish = () => {
         if (!isResolved) {
           isResolved = true;
+          cleanup();
           resolve();
         }
       };
 
+      utterance.onend = () => finish();
+
       utterance.onerror = (e) => {
         if (!isResolved) {
           isResolved = true;
+          cleanup();
           if (e.error === 'canceled' || e.error === 'interrupted') {
             resolve();
           } else {
@@ -96,19 +107,16 @@ export class SystemTTSProvider implements TTSProvider {
         }
       };
 
-      // Check abort signal
-      if (prepared.options.signal?.aborted) {
-        resolve();
-        return;
-      }
-
-      prepared.options.signal?.addEventListener('abort', () => {
+      const onAbort = () => {
         window.speechSynthesis.cancel();
-        if (!isResolved) {
-          isResolved = true;
-          resolve();
-        }
-      });
+        finish();
+      };
+
+      const cleanup = () => {
+        playbackSignal?.removeEventListener('abort', onAbort);
+      };
+
+      playbackSignal?.addEventListener('abort', onAbort);
 
       window.speechSynthesis.speak(utterance);
     });

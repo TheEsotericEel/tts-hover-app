@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript Typecheck
+        run: npm run typecheck
+
+      - name: Build Extension
+        run: npm run build
+
+      - name: Run Test Suite
+        run: npm run test
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Test Python TTS Server
+        run: |
+          python3 -c "
+          import sys
+          sys.path.insert(0, 'tts-server')
+          from providers.mock_neural import MockNeuralProvider
+          provider = MockNeuralProvider()
+          audio = provider.synthesize('Testing speech synthesis', 'synth_lead', 1.0)
+          assert len(audio) > 100
+          assert audio[:4] == b'RIFF'
+          print('Python server mock provider passed!')
+          "

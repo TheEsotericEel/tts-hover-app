@@ -6,11 +6,15 @@
   "description": "Point-to-read hover TTS extension with swappable providers",
   "scripts": {
     "build": "node scripts/build.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/**/*.test.ts",
     "generate-icons": "node scripts/generate-icons.js"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.280",
-    "typescript": "^5.4.5",
-    "vite": "^5.2.11"
+    "@types/node": "^22.13.5",
+    "esbuild": "^0.21.5",
+    "tsx": "^4.23.12",
+    "typescript": "^5.4.5"
   }
 }

@@ -8,29 +8,34 @@ export interface Voice {
 export interface SpeechOptions {
   voice?: string;
   speed?: number;
-  signal?: AbortSignal;
+  signal?: AbortSignal; // Preparation abort signal only
 }
 
-export type PreparedSpeech =
+export type PreparedSpeechData =
   | {
       type: 'system';
       text: string;
-      utterance?: SpeechSynthesisUtterance;
-      options: SpeechOptions;
+      voice?: string;
+      speed?: number;
     }
   | {
       type: 'audio';
       buffer: AudioBuffer;
-      audioContext: AudioContext;
-      options: SpeechOptions;
+      audioContext?: AudioContext;
+      speed?: number;
     };
+
+export interface PreparedSpeech {
+  providerId: string;
+  data: PreparedSpeechData;
+}
 
 export interface TTSProvider {
   id: string;
   name: string;
   listVoices(): Promise<Voice[]>;
   prepare(text: string, options: SpeechOptions): Promise<PreparedSpeech>;
-  play(prepared: PreparedSpeech): Promise<void>;
+  play(prepared: PreparedSpeech, playbackSignal?: AbortSignal): Promise<void>;
   stop(): void;
 }
 
