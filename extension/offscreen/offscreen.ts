@@ -151,7 +151,7 @@ class OffscreenNeuralEngine {
 
     // Construct AudioBuffer in offscreen context
     const audioBuffer = ctx.createBuffer(1, rawAudio.length, sampleRate);
-    audioBuffer.copyToChannel(rawAudio as unknown as Float32Array, 0);
+    audioBuffer.getChannelData(0).set(rawAudio);
 
     // Store in LRU cache
     if (this.audioCache.size >= this.maxCacheSize) {
