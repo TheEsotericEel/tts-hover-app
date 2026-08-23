@@ -20,12 +20,34 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     ];
   }
 
-  public async getStatus(): Promise<{ status: string; device?: string; dtype?: string; error?: string }> {
+  /**
+   * Two-stage messaging helper:
+   * 1. Ensure background worker has created the offscreen document
+   * 2. Send targeted command directly to the offscreen neural engine
+   */
+  private async sendToOffscreen(message: any): Promise<any> {
     if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      return { status: 'not_loaded' };
+      throw new Error('Chrome runtime messaging is unavailable.');
     }
+
+    // Stage 1: Ensure offscreen document exists via background
+    const ensureRes = await chrome.runtime.sendMessage({
+      action: 'ENSURE_KOKORO_OFFSCREEN',
+    });
+    if (ensureRes && ensureRes.ok === false) {
+      throw new Error(ensureRes.error || 'Failed to ensure offscreen document.');
+    }
+
+    // Stage 2: Send neural command strictly to offscreen target
+    return await chrome.runtime.sendMessage({
+      ...message,
+      target: 'kokoro-offscreen',
+    });
+  }
+
+  public async getStatus(): Promise<{ status: string; device?: string; dtype?: string; error?: string }> {
     try {
-      const res = await chrome.runtime.sendMessage({ action: 'KOKORO_GET_STATUS' });
+      const res = await this.sendToOffscreen({ action: 'KOKORO_GET_STATUS' });
       return res || { status: 'not_loaded' };
     } catch {
       return { status: 'not_loaded' };
@@ -33,10 +55,7 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
   }
 
   public async loadModel(): Promise<void> {
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      throw new Error('Chrome runtime messaging is unavailable.');
-    }
-    const res = await chrome.runtime.sendMessage({ action: 'KOKORO_LOAD_MODEL' });
+    const res = await this.sendToOffscreen({ action: 'KOKORO_LOAD_MODEL' });
     if (!res || !res.ok) {
       throw new Error(res?.error || 'Failed to initialize in-browser Kokoro model.');
     }
@@ -46,37 +65,53 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     const voice = options.voice || 'af_heart';
     const speed = options.speed || 1.0;
     const cacheKey = SpeechCache.generateKey(this.id, voice, speed, text);
-
-    if (typeof chrome === 'undefined' || !chrome.runtime?.sendMessage) {
-      throw new Error('Chrome runtime messaging is unavailable.');
-    }
-
-    const res = await chrome.runtime.sendMessage({
-      action: 'KOKORO_PREPARE',
-      text,
-      voice,
-      speed,
-      cacheKey,
-    });
+    const requestId = `req_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`;
 
     if (options.signal?.aborted) {
-      throw new Error('Synthesis aborted');
+      throw new Error('Synthesis aborted before start');
     }
 
-    if (!res || !res.ok) {
-      throw new Error(res?.error || 'Offscreen Kokoro synthesis failed.');
-    }
+    const abortHandler = () => {
+      chrome.runtime.sendMessage({
+        target: 'kokoro-offscreen',
+        action: 'KOKORO_ABORT_PREPARE',
+        requestId,
+      }).catch(() => {});
+    };
 
-    return {
-      providerId: this.id,
-      data: {
-        type: 'offscreen',
-        cacheKey: res.cacheKey || cacheKey,
+    options.signal?.addEventListener('abort', abortHandler, { once: true });
+
+    try {
+      const res = await this.sendToOffscreen({
+        action: 'KOKORO_PREPARE',
         text,
         voice,
         speed,
-      },
-    };
+        cacheKey,
+        requestId,
+      });
+
+      if (options.signal?.aborted) {
+        throw new Error('Synthesis aborted');
+      }
+
+      if (!res || !res.ok) {
+        throw new Error(res?.error || 'Offscreen Kokoro synthesis failed.');
+      }
+
+      return {
+        providerId: this.id,
+        data: {
+          type: 'offscreen',
+          cacheKey: res.cacheKey || cacheKey,
+          text,
+          voice,
+          speed,
+        },
+      };
+    } finally {
+      options.signal?.removeEventListener('abort', abortHandler);
+    }
   }
 
   public async play(prepared: PreparedSpeech, playbackSignal?: AbortSignal): Promise<void> {
@@ -97,7 +132,7 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
     playbackSignal?.addEventListener('abort', onAbort);
 
     try {
-      const res = await chrome.runtime.sendMessage({
+      const res = await this.sendToOffscreen({
         action: 'KOKORO_PLAY',
         cacheKey,
       });
@@ -112,7 +147,10 @@ export class BrowserKokoroTTSProvider implements TTSProvider {
 
   public stop(): void {
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-      chrome.runtime.sendMessage({ action: 'KOKORO_STOP' }).catch(() => {});
+      chrome.runtime.sendMessage({
+        target: 'kokoro-offscreen',
+        action: 'KOKORO_STOP',
+      }).catch(() => {});
     }
   }
 }

@@ -4,22 +4,54 @@ import { TTSClient } from '../extension/speech/client.ts';
 import { BrowserKokoroTTSProvider } from '../extension/speech/providers/browser_kokoro.ts';
 
 describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
+  let offscreenAudioCache = new Map<string, boolean>();
+  let abortedRequests = new Set<string>();
+
   beforeEach(() => {
+    offscreenAudioCache.clear();
+    abortedRequests.clear();
+
+    // Model the realistic Chrome two-listener topology (Background Worker + Offscreen Document)
     (globalThis as any).chrome = {
       runtime: {
         sendMessage: async (msg: any) => {
+          // 1. Background Listener Simulation
+          if (msg.action === 'ENSURE_KOKORO_OFFSCREEN') {
+            return { ok: true };
+          }
+          if (msg.target !== 'kokoro-offscreen') {
+            // Background ignores non-lifecycle messages
+            return undefined;
+          }
+
+          // 2. Offscreen Listener Simulation (target === 'kokoro-offscreen')
+          if (msg.action === 'KOKORO_GET_STATUS') {
+            return { status: 'ready', device: 'webgpu', dtype: 'fp32' };
+          }
+          if (msg.action === 'KOKORO_LOAD_MODEL') {
+            return { ok: true, info: { status: 'ready', device: 'webgpu', dtype: 'fp32' } };
+          }
           if (msg.action === 'KOKORO_PREPARE') {
+            if (abortedRequests.has(msg.requestId)) {
+              return { ok: false, error: 'Cancelled' };
+            }
+            offscreenAudioCache.set(msg.cacheKey, true);
             return { ok: true, cacheKey: msg.cacheKey };
           }
+          if (msg.action === 'KOKORO_ABORT_PREPARE') {
+            abortedRequests.add(msg.requestId);
+            return { ok: true };
+          }
           if (msg.action === 'KOKORO_PLAY') {
+            if (!offscreenAudioCache.has(msg.cacheKey)) {
+              return { ok: false, error: `Audio for cacheKey '${msg.cacheKey}' not found in offscreen cache.` };
+            }
             return { ok: true };
           }
           if (msg.action === 'KOKORO_STOP') {
             return { ok: true };
           }
-          if (msg.action === 'KOKORO_GET_STATUS') {
-            return { status: 'ready', device: 'wasm', dtype: 'q8' };
-          }
+
           return { ok: true };
         },
       },
@@ -79,41 +111,49 @@ describe('TTSClient Lifecycle & In-Browser Kokoro', () => {
     assert.strictEqual(playError, null);
   });
 
-  test('handles offscreen audio cacheKeys in BrowserKokoroTTSProvider', async () => {
-    let playActionReceived = false;
-
-    (globalThis as any).chrome = {
-      runtime: {
-        sendMessage: async (msg: any) => {
-          if (msg.action === 'KOKORO_PREPARE') {
-            return { ok: true, cacheKey: msg.cacheKey };
-          }
-          if (msg.action === 'KOKORO_PLAY') {
-            playActionReceived = true;
-            return { ok: true };
-          }
-          if (msg.action === 'KOKORO_STOP') {
-            return { ok: true };
-          }
-          if (msg.action === 'KOKORO_GET_STATUS') {
-            return { status: 'ready', device: 'wasm', dtype: 'q8' };
-          }
-          return { ok: true };
-        },
-      },
-    };
-
+  test('two-stage messaging routes lifecycle to background and neural commands strictly to offscreen', async () => {
     const provider = new BrowserKokoroTTSProvider();
+
+    // 1. Check status
+    const status = await provider.getStatus();
+    assert.strictEqual(status.status, 'ready');
+    assert.strictEqual(status.device, 'webgpu');
+
+    // 2. Load model
+    await provider.loadModel();
+
+    // 3. List voices
     const voices = await provider.listVoices();
     assert.strictEqual(voices.length >= 5, true);
     assert.strictEqual(voices[0].id, 'af_heart');
 
-    const prepared = await provider.prepare('Synthesize in-browser speech', { voice: 'af_heart', speed: 1.0 });
+    // 4. Prepare speech
+    const prepared = await provider.prepare('Synthesize in-browser speech with WebGPU', { voice: 'af_heart', speed: 1.0 });
     assert.strictEqual(prepared.providerId, 'kokoro-browser');
     assert.strictEqual(prepared.data.type, 'offscreen');
+    assert.strictEqual(offscreenAudioCache.has(prepared.data.cacheKey!), true);
 
+    // 5. Play speech
     await provider.play(prepared);
-    assert.strictEqual(playActionReceived, true);
+  });
+
+  test('cancels in-flight preparation via AbortSignal and requestId', async () => {
+    const provider = new BrowserKokoroTTSProvider();
+    const abortController = new AbortController();
+
+    // Abort before start
+    abortController.abort();
+
+    await assert.rejects(
+      async () => {
+        await provider.prepare('Obsolete hover text block', {
+          voice: 'af_heart',
+          speed: 1.0,
+          signal: abortController.signal,
+        });
+      },
+      /aborted/
+    );
   });
 
   test('routes fallback preparation to the provider that prepared it', async () => {

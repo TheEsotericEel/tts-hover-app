@@ -47,18 +47,24 @@ chrome.runtime.onInstalled.addListener(async () => {
   console.log('[Point & Read] Background service worker initialized.');
 });
 
-// Forward or ensure offscreen is awake on Kokoro messages
+// Stage 1 Lifecycle: Background worker handles only ENSURE_KOKORO_OFFSCREEN
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message && typeof message.action === 'string' && message.action.startsWith('KOKORO_')) {
+  if (message?.target === 'kokoro-offscreen') {
+    // Explicitly ignore neural engine commands targeted directly to offscreen
+    return false;
+  }
+
+  if (message?.action === 'ENSURE_KOKORO_OFFSCREEN') {
     ensureOffscreenDocument()
       .then(() => {
-        // Return false to let the offscreen document itself handle and respond to the message
-        sendResponse({ ok: true, forwarded: true });
+        sendResponse({ ok: true });
       })
       .catch((err) => {
         console.error('[Background] Failed to ensure offscreen document:', err);
         sendResponse({ ok: false, error: err.message });
       });
-    return true;
+    return true; // Keep channel open for async response
   }
+
+  return false;
 });

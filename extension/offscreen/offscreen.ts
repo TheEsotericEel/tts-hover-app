@@ -33,15 +33,19 @@ class OffscreenNeuralEngine {
     device: 'wasm',
     dtype: 'q8',
   };
-  private loadPromise: Promise<any> | null = null;
+  private capabilitiesPromise: Promise<void>;
+  private loadPromise: Promise<ModelInfo> | null = null;
   private audioContext: AudioContext | null = null;
   private currentSource: AudioBufferSourceNode | null = null;
   private currentPlayResolve: (() => void) | null = null;
   private audioCache = new Map<string, AudioBuffer>();
   private readonly maxCacheSize = 50;
 
+  // Track in-flight preparation requests for cancellation
+  private activeGenerations = new Set<string>();
+
   constructor() {
-    this.detectCapabilities();
+    this.capabilitiesPromise = this.detectCapabilities();
     this.initMessageListener();
   }
 
@@ -75,6 +79,9 @@ class OffscreenNeuralEngine {
   }
 
   public async loadModel(): Promise<ModelInfo> {
+    // Ensure WebGPU capability detection has completed before starting load
+    await this.capabilitiesPromise;
+
     if (this.modelInfo.status === 'ready' && this.tts) {
       return this.modelInfo;
     }
@@ -126,14 +133,22 @@ class OffscreenNeuralEngine {
     return this.loadPromise;
   }
 
-  public async prepareSpeech(text: string, voice: string, speed: number, cacheKey: string): Promise<string> {
-    // Check if already in offscreen audio cache
+  public async prepareSpeech(text: string, voice: string, speed: number, cacheKey: string, requestId?: string): Promise<string> {
     if (this.audioCache.has(cacheKey)) {
       return cacheKey;
     }
 
+    if (requestId) {
+      this.activeGenerations.add(requestId);
+    }
+
     if (this.modelInfo.status !== 'ready' || !this.tts) {
       await this.loadModel();
+    }
+
+    // Check if cancelled while waiting for model load
+    if (requestId && !this.activeGenerations.has(requestId)) {
+      throw new Error('Preparation cancelled before generation');
     }
 
     const cleanVoice = voice && voice !== 'default' ? voice : 'af_heart';
@@ -144,6 +159,11 @@ class OffscreenNeuralEngine {
       voice: cleanVoice,
       speed: cleanSpeed,
     });
+
+    // Check if cancelled during generation
+    if (requestId && !this.activeGenerations.has(requestId)) {
+      throw new Error('Preparation cancelled');
+    }
 
     const ctx = this.getAudioContext();
     const rawAudio: Float32Array = result.audio;
@@ -162,7 +182,17 @@ class OffscreenNeuralEngine {
     }
     this.audioCache.set(cacheKey, audioBuffer);
 
+    if (requestId) {
+      this.activeGenerations.delete(requestId);
+    }
+
     return cacheKey;
+  }
+
+  public abortPrepare(requestId: string): void {
+    if (requestId) {
+      this.activeGenerations.delete(requestId);
+    }
   }
 
   public async playSpeech(cacheKey: string): Promise<void> {
@@ -207,7 +237,7 @@ class OffscreenNeuralEngine {
         this.currentSource.stop();
         this.currentSource.disconnect();
       } catch {
-        // Source might already have finished
+        // Already ended
       }
       this.currentSource = null;
     }
@@ -219,35 +249,47 @@ class OffscreenNeuralEngine {
 
   private initMessageListener(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (!message || typeof message !== 'object') return;
+      // Strictly handle only messages explicitly targeted to the kokoro-offscreen engine
+      if (message?.target !== 'kokoro-offscreen') {
+        return false;
+      }
 
       const { action } = message;
 
       if (action === 'KOKORO_GET_STATUS') {
-        sendResponse(this.modelInfo);
-        return false;
+        this.capabilitiesPromise.then(() => {
+          sendResponse(this.modelInfo);
+        });
+        return true;
       }
 
       if (action === 'KOKORO_LOAD_MODEL') {
         this.loadModel()
           .then((info) => sendResponse({ ok: true, info }))
-          .catch((err) => sendResponse({ ok: false, error: err.message }));
+          .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true; // Keep channel open for async response
       }
 
       if (action === 'KOKORO_PREPARE') {
-        const { text, voice, speed, cacheKey } = message;
-        this.prepareSpeech(text, voice, speed, cacheKey)
+        const { text, voice, speed, cacheKey, requestId } = message;
+        this.prepareSpeech(text, voice, speed, cacheKey, requestId)
           .then((key) => sendResponse({ ok: true, cacheKey: key }))
-          .catch((err) => sendResponse({ ok: false, error: err.message }));
+          .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
+      }
+
+      if (action === 'KOKORO_ABORT_PREPARE') {
+        const { requestId } = message;
+        this.abortPrepare(requestId);
+        sendResponse({ ok: true });
+        return false;
       }
 
       if (action === 'KOKORO_PLAY') {
         const { cacheKey } = message;
         this.playSpeech(cacheKey)
           .then(() => sendResponse({ ok: true }))
-          .catch((err) => sendResponse({ ok: false, error: err.message }));
+          .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
       }
 
@@ -256,6 +298,8 @@ class OffscreenNeuralEngine {
         sendResponse({ ok: true });
         return false;
       }
+
+      return false;
     });
   }
 }
