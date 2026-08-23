@@ -1,0 +1,8 @@
+# Core FastAPI server dependencies for M1.5
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.0.0
+
+# Future neural dependencies for M2 (Kokoro) and M2.1 (MeloTTS)
+# pip install kokoro>=0.8.4 soundfile numpy
+# pip install melotts

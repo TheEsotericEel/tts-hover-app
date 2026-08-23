@@ -1,0 +1,22 @@
+/* Minimal non-intrusive hover outline for Point & Read */
+.tts-reader-overlay {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2147483640;
+  display: none;
+  box-sizing: border-box;
+  border-radius: 4px;
+  border: 2px solid #6366f1; /* Indigo outline for selected state */
+  background: rgba(99, 102, 241, 0.04);
+  transition: top 0.08s ease-out, left 0.08s ease-out, width 0.08s ease-out, height 0.08s ease-out, border-color 0.15s ease;
+}
+
+.tts-reader-overlay.is-visible {
+  display: block;
+}
+
+.tts-reader-overlay.is-speaking {
+  border-color: #10b981; /* Emerald green outline for speaking state */
+  background: rgba(16, 185, 129, 0.06);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.3);
+}

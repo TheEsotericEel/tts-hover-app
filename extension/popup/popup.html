@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Point & Read</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">Point & Read</span>
+          <span class="brand-sub">Hover to select &bull; Click to read</span>
+        </div>
+      </div>
+      <label class="switch" title="Toggle Point & Read Mode">
+        <input type="checkbox" id="toggle-enabled" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <main class="controls">
+      <!-- Provider Selection -->
+      <div class="control-group">
+        <label for="select-provider">Provider</label>
+        <select id="select-provider">
+          <option value="system">System / Browser TTS</option>
+          <option value="mock">Mock Neural Engine</option>
+          <option value="kokoro">Kokoro-82M (Local)</option>
+          <option value="melo">MeloTTS (Local)</option>
+        </select>
+      </div>
+
+      <!-- Voice Selection -->
+      <div class="control-group">
+        <label for="select-voice">Voice</label>
+        <select id="select-voice">
+          <option value="default">Default Voice</option>
+        </select>
+      </div>
+
+      <!-- Speed Slider -->
+      <div class="control-group">
+        <div class="label-with-value">
+          <label for="slider-speed">Speed</label>
+          <span id="speed-value" class="value-badge">1.00x</span>
+        </div>
+        <input type="range" id="slider-speed" min="0.5" max="2.0" step="0.05" value="1.0">
+      </div>
+
+      <!-- Test Voice Button -->
+      <div class="action-row">
+        <button id="btn-test-voice" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+          Test Voice
+        </button>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="server-status">
+        <span id="server-dot" class="status-dot"></span>
+        <span id="server-status-text">Server checking...</span>
+      </div>
+      <div class="shortcut-hint">
+        <kbd>Esc</kbd> stops speech
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.ts"></script>
+</body>
+</html>
